@@ -21,7 +21,6 @@
 #include "Bear_BMP085.h"
 #include "logger_i2c_eeprom.h"
 #include "kalman.h"
-//#include <Adafruit_ADXL345_U.h>
 #include <Pangodream_18650_CL.h>
 
 #include "images/bear_altimeters128x128.h"
@@ -33,7 +32,8 @@
 
 unsigned long initialTime=0;
 
-#define BTN_UP 35 // Pinnumber for button for up/previous and select / enter actions (don't change this if you want to use the onboard buttons)
+//#define BTN_UP 35 // Pinnumber for button for up/previous and select / enter actions (don't change this if you want to use the onboard buttons)
+#define BTN_UP 47
 #define BTN_DWN 0 // Pinnumber for button for down/next and back / exit actions (don't change this if you want to use the onboard buttons)
 
 Button2 btnUp(BTN_UP); // Initialize the up button
@@ -45,9 +45,9 @@ GraphWidget gr = GraphWidget(&tft);    // Graph widget
 TraceWidget trAltitude = TraceWidget(&gr);    // Altitude
 TraceWidget trTemperature = TraceWidget(&gr);
 TraceWidget trPressure = TraceWidget(&gr);
-TraceWidget trAccelX = TraceWidget(&gr);    // Accel X
+/*TraceWidget trAccelX = TraceWidget(&gr);    // Accel X
 TraceWidget trAccelY = TraceWidget(&gr);    // Accel Y
-TraceWidget trAccelZ = TraceWidget(&gr);    // Accel Z
+TraceWidget trAccelZ = TraceWidget(&gr);*/    // Accel Z
 
 
 
@@ -61,12 +61,15 @@ TraceWidget trAccelZ = TraceWidget(&gr);    // Accel Z
 #define ICON_POS_X (tft.width() - ICON_WIDTH)
 
 #define MIN_USB_VOL 4.7
-#define ADC_PIN 34
+//#define ADC_PIN 34
+#define ADC_PIN 4
 #define CONV_FACTOR 1.8
 #define READS 20
 #define MAJOR_VERSION 0
 #define MINOR_VERSION 1
 #define BOARD_FIRMWARE "TTGOMiniBearAltimeter"
+#define IMU_SDA      16
+#define IMU_SCL      17
 #ifndef RX1
 #define RX1 33
 #endif
@@ -258,18 +261,10 @@ void button_loop()
 */
 void setup() {
   // initialise the connection
-  Wire.begin();
+  //Wire.begin();
+  Wire.begin(IMU_SDA, IMU_SCL);
   Serial.begin(115200);
-  Serial1.begin(115200);
-  Serial2.begin(115200);
   Serial.println("Starting");
-  Serial1.println("Starting serial1");
-  Serial2.println("Starting serial1");
-
-  //Serial2.begin(115200, SERIAL_8N1, RX1, TX1);
-  //char altiName [15];
-  //sprintf(altiName, "TTGOAlti%i", (int)config.altiID );
-  //SerialCom.begin("TTGOMiniAltimeter");
   pinMode(14, OUTPUT);
   digitalWrite(14, HIGH);
 
@@ -277,12 +272,12 @@ void setup() {
   tft.fillScreen(TFT_BLACK);
   tft.setSwapBytes(true);
   if (!bmp.begin(0)) {
-    Serial.println("Could not find a valid BMP085 sensor, check wiring!");
+    /*Serial.println("Could not find a valid BMP085 sensor, check wiring!");
     tft.drawString("Barometric sensor does not work", 6, 135);
     while (1) {
-      }  
+      }  */
   }
-
+  tft.setRotation(2);
   tft.pushImage(6, 0, 128, 128, bear_altimeters128x128);
   tft.drawString("Bear Altimeter", 6, 135);
   tft.drawString("ver 1.0", 6, 145);
@@ -340,32 +335,29 @@ void setup() {
   button_init();
 
 
-  tft.setRotation(1);
+  //tft.setRotation(1);
+  tft.setRotation(3);
   tft.fillScreen(TFT_BLACK);
   tft.drawString("altitude", 6, 0);
+  
   // Graph area is 200 pixels wide, 150 high, dark grey background
-  gr.createGraph(200, 100, tft.color565(5, 5, 5));
+  //gr.createGraph(200, 100, tft.color565(5, 5, 5));
+  // Graph area is 100 pixels wide, 100 high, dark grey background
+  gr.createGraph(100, 100, tft.color565(5, 5, 5));
   // x scale units is from 0 to 100, y scale units is 0 to 50
   gr.setGraphScale(0.0, 100.0, 0, 50.0);
 
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.fillScreen(TFT_BLACK);
   tft.setSwapBytes(true);
-  tft.setTextFont(2);
+  //tft.setTextFont(2);
+  tft.setTextFont(1);
 
   Serial.print("RX:");
   Serial.println(RX);
 
   Serial.print("TX:");
   Serial.println(TX);
-  
-
- /* Serial2.print("RX1:");
-  Serial2.println(RX1);
-
-  Serial2.print("TX1:");
-  Serial2.println(TX1);*/
-  
 }
 
 /*
@@ -382,15 +374,13 @@ void loop() {
 
   while ( readVal != ';')
   {
-
     button_loop();
 
     currAltitude = (long)ReadAltitude() - initialAltitude;
     if (liftOff)
         SendTelemetry(millis() - initialTime, 200);
     if (!( currAltitude > liftoffAltitude) )
-    {
-      
+    {    
       if (!inGraph) {
         SendTelemetry(0, 500);
         tft.setCursor (0, STATUS_HEIGHT_BAR);
@@ -421,23 +411,11 @@ void loop() {
           drawingText(String(batteryLevel) + "%");
         }
         char Altitude [15];
-        //currAltitude = (long)ReadAltitude() - initialAltitude;
+        currAltitude = (long)ReadAltitude() - initialAltitude;
         sprintf(Altitude, "Altitude = %i meters    ", currAltitude );
         tft.setCursor (0, STATUS_HEIGHT_BAR);
         tft.println("                                     ");
         tft.println(Altitude);
-
-
-        /*char temp [15];
-        sensors_event_t event345;
-        accel345.getEvent(&event345);
-        sprintf(temp, "x=%3.2f m/s", (float)event345.acceleration.x );
-        tft.println("");
-        tft.println(temp);
-        sprintf(temp, "y=%3.2f m/s", (float)event345.acceleration.y );
-        tft.println(temp);
-        sprintf(temp, "z=%3.2f m/s", (float)event345.acceleration.z );
-        tft.println(temp);*/
       }
 
       
@@ -455,22 +433,6 @@ void loop() {
           break;
         }
       }
-
-      /*while (SerialCom.available())
-      {
-        readVal = SerialCom.read();
-        if (readVal != ';' )
-        {
-          if (readVal != '\n')
-            commandbuffer[i++] = readVal;
-        }
-        else
-        {
-          commandbuffer[i++] = '\0';
-          break;
-        }
-      }*/
-
     }
     else {
         Serial.println("Recording!!!!");
@@ -505,7 +467,8 @@ void enter_sleep()
   delay(2000);
   pinMode(BUTTON_GPIO, INPUT_PULLUP);
   rtc_gpio_hold_en(BUTTON_GPIO);
-  esp_sleep_enable_ext0_wakeup(BUTTON_GPIO, LOW);
+  //esp_sleep_enable_ext0_wakeup(BUTTON_GPIO, LOW);
+  esp_sleep_enable_ext1_wakeup(GPIO_SEL_0, ESP_EXT1_WAKEUP_ALL_LOW);
   esp_deep_sleep_start();
 }
 
@@ -525,7 +488,8 @@ void drawAxesXY(float minX, float maxX, float minY, float maxY, int flightNbr, c
   gr.setGraphGrid(0.0, maxX / 5, 0.0, maxY / 5, TFT_BLUE);
 
   // Draw empty graph, top left corner at 20,10 on TFT
-  gr.drawGraph(30, 10);
+  //gr.drawGraph(30, 10);
+  gr.drawGraph(10, 10);
 
   // Draw the x axis scale
   tft.setTextDatum(TC_DATUM); // Top centre text datum
@@ -558,9 +522,7 @@ void drawAxesXY(float minX, float maxX, float minY, float maxY, int flightNbr, c
 */
 void drawFlightNbr(int flightNbr, int curveType) {
 
-
   logger.getFlightMinAndMax(flightNbr);
-
 
   //altitude
   if ( curveType == 0) {
@@ -590,7 +552,7 @@ void drawFlightNbr(int flightNbr, int curveType) {
     drawAxesXY(0.0, logger.getFlightDuration(), 0, (float) maxAccel / 1000.0, flightNbr, "Accel X,Y,Z (m/s)" );
   }*/
   //temperature
-  if (curveType == 3) {
+  if (curveType == 2) {
     trTemperature.startTrace(TFT_BROWN);
     drawAxesXY(0.0, logger.getFlightDuration(), 0, (float) logger.getMaxTemperature(), flightNbr, "Temp (°C)" );
   }
@@ -625,7 +587,7 @@ void drawFlightNbr(int flightNbr, int curveType) {
         trAccelY.addPoint( currentTime, (float)logger.getADXL345accelY() / 1000.0);
         trAccelZ.addPoint( currentTime, (float)logger.getADXL345accelZ() / 1000.0);
       }*/
-      if ( curveType == 3) {
+      if ( curveType == 2) {
         long temperature = logger.getFlightTemperatureData();
         trTemperature.addPoint(currentTime, temperature);
       }
