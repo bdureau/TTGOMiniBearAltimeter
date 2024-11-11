@@ -24,4 +24,4 @@ Comment out the following line
 
 and uncomment the following line
 
-#include <User_Setups/Setup25_TTGO_T_Display.h> 
+#include <User_Setups/Setup211_LilyGo_T_QT_Pro_S3.h>
