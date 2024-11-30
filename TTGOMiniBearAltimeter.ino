@@ -1,5 +1,5 @@
 /*
-    TTGO Mini Bear Altimeter ver0.1
+    TTGO Mini Bear Altimeter ver0.2
     Copyright Boris du Reau 2012-2024
     This is using a BMP085 or BMP180 presure sensor
     to compile it use ESP32 S3 Dev module
@@ -9,7 +9,10 @@
     Initial version of the code, this is re-using code for the TTGO Bear Altimeter firmware
     can record altitude, acceleration, temperature and pressure
 
-   
+    Major changes on version 0.2
+    Code clean up. Turn off the backlight when going to sleep
+    detect apogee
+
 */
 
 #include <TFT_eSPI.h>
@@ -30,10 +33,10 @@
 #include "images/battery_04.h"
 #include "images/battery_05.h"
 
-unsigned long initialTime=0;
+unsigned long initialTime = 0;
+unsigned long timeToApogee = 0;
 
-//#define BTN_UP 35 // Pinnumber for button for up/previous and select / enter actions (don't change this if you want to use the onboard buttons)
-#define BTN_UP 47
+#define BTN_UP 47 // Pinnumber for button for up/previous and select / enter actions (don't change this if you want to use the onboard buttons)
 #define BTN_DWN 0 // Pinnumber for button for down/next and back / exit actions (don't change this if you want to use the onboard buttons)
 
 Button2 btnUp(BTN_UP); // Initialize the up button
@@ -45,10 +48,6 @@ GraphWidget gr = GraphWidget(&tft);    // Graph widget
 TraceWidget trAltitude = TraceWidget(&gr);    // Altitude
 TraceWidget trTemperature = TraceWidget(&gr);
 TraceWidget trPressure = TraceWidget(&gr);
-/*TraceWidget trAccelX = TraceWidget(&gr);    // Accel X
-TraceWidget trAccelY = TraceWidget(&gr);    // Accel Y
-TraceWidget trAccelZ = TraceWidget(&gr);*/    // Accel Z
-
 
 
 //////////////////////////////////////////////////////////////////////
@@ -61,15 +60,16 @@ TraceWidget trAccelZ = TraceWidget(&gr);*/    // Accel Z
 #define ICON_POS_X (tft.width() - ICON_WIDTH)
 
 #define MIN_USB_VOL 4.7
-//#define ADC_PIN 34
+
 #define ADC_PIN 4
 #define CONV_FACTOR 1.8
 #define READS 20
 #define MAJOR_VERSION 0
-#define MINOR_VERSION 1
+#define MINOR_VERSION 2
 #define BOARD_FIRMWARE "TTGOMiniBearAltimeter"
 #define IMU_SDA      16
 #define IMU_SCL      17
+#define PIN_LCD_BL   10
 #ifndef RX1
 #define RX1 33
 #endif
@@ -79,8 +79,6 @@ TraceWidget trAccelZ = TraceWidget(&gr);*/    // Accel Z
 #endif
 
 Pangodream_18650_CL BL(ADC_PIN, CONV_FACTOR, READS);
-
-//Adafruit_ADXL345_Unified accel345 = Adafruit_ADXL345_Unified();
 
 // Built in button GPIO - adjust for your board
 #define BUTTON_GPIO GPIO_NUM_35
@@ -118,6 +116,8 @@ long currAltitude;
 long diplayedFlightNbr = 0;
 long currentCurveType = 0;
 long apogeeAltitude;
+//nbr of measures to do so that we are sure that apogee has been reached
+unsigned long measures = 5;
 
 /*
    drawingText(String text)
@@ -268,13 +268,18 @@ void setup() {
   pinMode(14, OUTPUT);
   digitalWrite(14, HIGH);
 
+  //Disable backlight hold on
+  gpio_hold_dis((gpio_num_t)PIN_LCD_BL);
+  pinMode(PIN_LCD_BL, OUTPUT);
+  digitalWrite(PIN_LCD_BL, LOW);
+
   tft.init();
   tft.fillScreen(TFT_BLACK);
   tft.setSwapBytes(true);
   if (!bmp.begin(0)) {
     /*Serial.println("Could not find a valid BMP085 sensor, check wiring!");
-    tft.drawString("Barometric sensor does not work", 6, 135);
-    while (1) {
+      tft.drawString("Barometric sensor does not work", 6, 135);
+      while (1) {
       }  */
   }
   tft.setRotation(2);
@@ -301,20 +306,6 @@ void setup() {
   }
   initialAltitude = (long)(sum / 10.0);
 
-
-  // init accelerometer
-  /*if (!accel345.begin())
-  {
-    //There was a problem detecting the ADXL375 ... check your connections
-    Serial.println("Ooops, no ADXL345 detected ... Check your wiring!");
-    tft.drawString("ADXL345 sensor does not work", 6, 135);
-    while (1) {
-      
-    }
-  } else {
-    accel345.setRange(ADXL345_RANGE_16_G);
-  }*/
-
   int v_ret;
   v_ret = logger.readFlightList();
   long lastFlightNbr = logger.getLastFlightNbr();
@@ -339,7 +330,7 @@ void setup() {
   tft.setRotation(3);
   tft.fillScreen(TFT_BLACK);
   tft.drawString("altitude", 6, 0);
-  
+
   // Graph area is 200 pixels wide, 150 high, dark grey background
   //gr.createGraph(200, 100, tft.color565(5, 5, 5));
   // Graph area is 100 pixels wide, 100 high, dark grey background
@@ -350,7 +341,7 @@ void setup() {
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.fillScreen(TFT_BLACK);
   tft.setSwapBytes(true);
-  //tft.setTextFont(2);
+ 
   tft.setTextFont(1);
 
   Serial.print("RX:");
@@ -378,9 +369,9 @@ void loop() {
 
     currAltitude = (long)ReadAltitude() - initialAltitude;
     if (liftOff)
-        SendTelemetry(millis() - initialTime, 200);
+      SendTelemetry(millis() - initialTime, 200);
     if (!( currAltitude > liftoffAltitude) )
-    {    
+    {
       if (!inGraph) {
         SendTelemetry(0, 500);
         tft.setCursor (0, STATUS_HEIGHT_BAR);
@@ -410,7 +401,7 @@ void loop() {
           }
           drawingText(String(batteryLevel) + "%");
         }
-        char Altitude [15];
+        char Altitude [30];
         currAltitude = (long)ReadAltitude() - initialAltitude;
         sprintf(Altitude, "Altitude = %i meters    ", currAltitude );
         tft.setCursor (0, STATUS_HEIGHT_BAR);
@@ -418,7 +409,7 @@ void loop() {
         tft.println(Altitude);
       }
 
-      
+
       while (Serial.available())
       {
         readVal = Serial.read();
@@ -435,8 +426,9 @@ void loop() {
       }
     }
     else {
-        Serial.println("Recording!!!!");
-        recordAltitude();
+      Serial.println("Recording!!!!");
+      recordAltitude();
+      Serial.println("Finished!!!!");
     }
   }
   interpretCommandBuffer(commandbuffer);
@@ -465,9 +457,15 @@ void enter_sleep()
   tft.drawString("turning off...", 6, 185);
   digitalWrite(4, LOW);
   delay(2000);
+  //set display goto deep sleep 100uA
+  tft.writecommand(0x10);
+
+  // High level off the backlight
+  digitalWrite(PIN_LCD_BL, HIGH);
+  //Enable backlight hold on high level
+  gpio_hold_en((gpio_num_t)PIN_LCD_BL);
   pinMode(BUTTON_GPIO, INPUT_PULLUP);
   rtc_gpio_hold_en(BUTTON_GPIO);
-  //esp_sleep_enable_ext0_wakeup(BUTTON_GPIO, LOW);
   esp_sleep_enable_ext1_wakeup(GPIO_SEL_0, ESP_EXT1_WAKEUP_ALL_LOW);
   esp_deep_sleep_start();
 }
@@ -488,7 +486,6 @@ void drawAxesXY(float minX, float maxX, float minY, float maxY, int flightNbr, c
   gr.setGraphGrid(0.0, maxX / 5, 0.0, maxY / 5, TFT_BLUE);
 
   // Draw empty graph, top left corner at 20,10 on TFT
-  //gr.drawGraph(30, 10);
   gr.drawGraph(10, 10);
 
   // Draw the x axis scale
@@ -497,19 +494,19 @@ void drawAxesXY(float minX, float maxX, float minY, float maxY, int flightNbr, c
   if (maxX < 1000) {
     tft.drawNumber(maxX / 2, gr.getPointX(maxX / 2), gr.getPointY(0) + 3);
     tft.drawNumber(maxX, gr.getPointX(maxX), gr.getPointY(0) + 3);
-    tft.drawString("time(ms)", gr.getPointX(maxX / 4),  gr.getPointY(0) + 3);
+    tft.drawString("time(ms)", gr.getPointX(maxX / 4),  gr.getPointY(0) - 13);
   } else {
     char temp[10];
     sprintf(temp, "%3.1f",  maxX / 1000 / 2);
     tft.drawString(temp, gr.getPointX(maxX / 2),  gr.getPointY(0) + 3);
     sprintf(temp, "%3.1f",  maxX / 1000);
     tft.drawString(temp, gr.getPointX(maxX) - 10,  gr.getPointY(0) + 3);
-    tft.drawString("time (s)", gr.getPointX(maxX / 4),  gr.getPointY(0) + 3);
+    tft.drawString("time (s)", gr.getPointX(maxX / 4),  gr.getPointY(0) - 13);
   }
   char flight[15];
   sprintf(flight, "Flight %i  ",  flightNbr);
   tft.drawString(flight, gr.getPointX(maxX) - 10,  gr.getPointY(maxY));
-  tft.drawString(curveName, gr.getPointX(maxX / 3), gr.getPointY(maxY));
+  tft.drawString(curveName, gr.getPointX(maxX / 4), gr.getPointY(maxY)+10);
 
   // Draw the y axis scale
   tft.setTextDatum(MR_DATUM); // Middle right text datum
@@ -525,32 +522,18 @@ void drawFlightNbr(int flightNbr, int curveType) {
   logger.getFlightMinAndMax(flightNbr);
 
   //altitude
-  if ( curveType == 0) {
+  if (curveType == 0) {
     // Start altitude trace
     trAltitude.startTrace(TFT_GREEN);
-    drawAxesXY(0.0, logger.getFlightDuration(), 0, (float) logger.getMaxAltitude(), flightNbr, "Altitude (meters)" );
+    drawAxesXY(0.0, logger.getFlightDuration(), 0, (float) logger.getMaxAltitude(), flightNbr, "Alt (m)" );
   }
 
   //pressure
   if (curveType == 1) {
     trPressure.startTrace(TFT_GREY);
-    drawAxesXY(0.0, logger.getFlightDuration(), 0, (float) logger.getMaxPressure(), flightNbr, "Pressure (mBar)" );
+    drawAxesXY(0.0, logger.getFlightDuration(), 0, (float) logger.getMaxPressure(), flightNbr, "Press (mBar)" );
   }
 
-  /*if (curveType == 2) {
-    trAccelX.startTrace(TFT_RED);
-    trAccelY.startTrace(TFT_PURPLE);
-    trAccelY.startTrace(TFT_YELLOW);
-    float maxAccel = 0.0f;
-    if (logger.getMaxAccelX() > maxAccel)
-      maxAccel = (float)logger.getMaxAccelX();
-    if (logger.getMaxAccelY() > maxAccel)
-      maxAccel = (float)logger.getMaxAccelY();
-    if (logger.getMaxAccelZ() > maxAccel)
-      maxAccel = (float)logger.getMaxAccelZ();
-
-    drawAxesXY(0.0, logger.getFlightDuration(), 0, (float) maxAccel / 1000.0, flightNbr, "Accel X,Y,Z (m/s)" );
-  }*/
   //temperature
   if (curveType == 2) {
     trTemperature.startTrace(TFT_BROWN);
@@ -582,11 +565,6 @@ void drawFlightNbr(int flightNbr, int curveType) {
         long pressure = logger.getFlightPressureData();
         trPressure.addPoint(currentTime, pressure);
       }
-      /*if ( curveType == 2) {
-        trAccelX.addPoint( currentTime, (float)logger.getADXL345accelX() / 1000.0);
-        trAccelY.addPoint( currentTime, (float)logger.getADXL345accelY() / 1000.0);
-        trAccelZ.addPoint( currentTime, (float)logger.getADXL345accelZ() / 1000.0);
-      }*/
       if ( curveType == 2) {
         long temperature = logger.getFlightTemperatureData();
         trTemperature.addPoint(currentTime, temperature);
@@ -599,15 +577,13 @@ void drawFlightNbr(int flightNbr, int curveType) {
 /*
    recordAltitude()
 
-
 */
 void recordAltitude()
 {
   long recordingTimeOut = 120 * 1000;
 
   exitRecording = false;
-  
-  //long initialTime = 0;
+
   lastAltitude = 0;
 
   while (!exitRecording)
@@ -646,25 +622,27 @@ void recordAltitude()
       diffTime = currentTime - prevTime;
       prevTime = currentTime;
       //display
-      char Altitude [15];
+      char Altitude [30];
       currAltitude = (long)ReadAltitude() - initialAltitude;
       sprintf(Altitude, "Altitude = %i meters    ", currAltitude );
       tft.setCursor (0, STATUS_HEIGHT_BAR);
       tft.println("Recording in progress .....");
       tft.println(Altitude);
 
-
-      /*char temp [15];
-      sensors_event_t event345;
-      accel345.getEvent(&event345);
-      sprintf(temp, "x=%3.2f m/s", (float)event345.acceleration.x );
-      tft.println("");
-      tft.println(temp);
-      sprintf(temp, "y=%3.2f m/s", (float)event345.acceleration.y );
-      tft.println(temp);
-      sprintf(temp, "z=%3.2f m/s", (float)event345.acceleration.z );
-      tft.println(temp);*/
-
+      // detect apogee
+      if (currAltitude < lastAltitude) {
+        measures = measures - 1;
+        if (measures == 0)
+        {
+          apogeeAltitude = lastAltitude;
+          timeToApogee = currentTime;
+        }
+      }
+      else
+      {
+        lastAltitude = currAltitude;
+        measures = 5; //config.nbrOfMeasuresForApogee;
+      }
       //record
       if (canRecord)
       {
@@ -672,12 +650,6 @@ void recordAltitude()
         logger.setFlightAltitudeData(currAltitude);
         logger.setFlightTemperatureData((long) bmp.readTemperature());
         logger.setFlightPressureData((long) bmp.readPressure());
-
-        /*sensors_event_t event345;
-        accel345.getEvent(&event345);
-        logger.setADXL345accelX((long) 1000 * event345.acceleration.x);
-        logger.setADXL345accelY((long) 1000 * event345.acceleration.y);
-        logger.setADXL345accelZ((long) 1000 * event345.acceleration.z);*/
 
 
         if ( (currentMemaddress + logger.getSizeOfFlightData())  > endAddress) {
@@ -690,8 +662,9 @@ void recordAltitude()
           currentMemaddress++;
         }
       }
-
-      if ((canRecord  && (currAltitude < 10) && (millis() - initialTime) > 30000) || (canRecord  && (millis() - initialTime) > recordingTimeOut) )
+      // detect landing
+      if ((canRecord  && (currAltitude < 10) && (millis() - timeToApogee) > 2000) || (canRecord  && (millis() - initialTime) > recordingTimeOut) )
+        //if ((canRecord  && (currAltitude < 10) && (millis() - initialTime) > 30000) || (canRecord  && (millis() - initialTime) > recordingTimeOut) )
       {
         //end loging
         //store start and end address
@@ -701,12 +674,19 @@ void recordAltitude()
         liftOff = false;
 
         logger.writeFlightList();
+        lastAltitude = 0;
+        apogeeAltitude = 0;
         exitRecording = true;
         if (currentFileNbr < 25)
           currentFileNbr ++;
+
+        //Serial.println("End recording");
       }
+      //Serial.println("End recording1");
     } // end while (liftoff)
+    //Serial.println("End recording2");
   } //end while(recording)
+  //Serial.println("End recording3");
 }
 
 /*
@@ -769,16 +749,7 @@ void interpretCommandBuffer(char *commandbuffer) {
   //toggle continuity on and off
   else if (commandbuffer[0] == 'c')
   {
-    /*if (noContinuity == false)
-      {
-      noContinuity = true;
-      SerialCom.println(F("Continuity off \n"));
-      }
-      else
-      {
-      noContinuity = false;
-      SerialCom.println(F("Continuity on \n"));
-      }*/
+
   }
   //reset alti config this is equal to t why do I have 2 !!!!
   else if (commandbuffer[0] == 'd')
@@ -875,8 +846,8 @@ void interpretCommandBuffer(char *commandbuffer) {
     Serial.print(F("$end;\n"));
 
     /*SerialCom.print("$");
-    SerialCom.print(flightData);
-    SerialCom.print(F("$end;\n"));*/
+      SerialCom.print(flightData);
+      SerialCom.print(F("$end;\n"));*/
 
 
   }
@@ -985,13 +956,13 @@ void interpretCommandBuffer(char *commandbuffer) {
     if (commandbuffer[1] == '1') {
       //SerialCom.print(F("Telemetry enabled\n"));
       telemetryEnable = true;
-      }
-      else {
+    }
+    else {
       //SerialCom.print(F("Telemetry disabled\n"));
       telemetryEnable = false;
-      }
-      Serial.print(F("$OK;\n"));
-      //SerialCom.print(F("$OK;\n"));
+    }
+    Serial.print(F("$OK;\n"));
+    //SerialCom.print(F("$OK;\n"));
   }
 
 
@@ -1146,7 +1117,7 @@ void SendTelemetry(long sampleTime, int freq) {
     if (liftOff)
       li = 1;
 
-        
+
     int landed = 0;
     if ( liftOff && currAltitude < 10)
       landed = 1;
@@ -1193,14 +1164,14 @@ void SendTelemetry(long sampleTime, int freq) {
     strcat(altiTelem, temp);
 
     /*sensors_event_t event345;
-    accel345.getEvent(&event345);
-    sprintf(temp, "%i,", (int)(1000 * ((float)event345.acceleration.x)) );
-    strcat(altiTelem, temp);
-    sprintf(temp, "%i,", (int)(1000 * ((float)event345.acceleration.y)) );
-    strcat(altiTelem, temp);
-    sprintf(temp, "%i,", (int)(1000 * ((float)event345.acceleration.z)) );
-    strcat(altiTelem, temp);*/
-    
+      accel345.getEvent(&event345);
+      sprintf(temp, "%i,", (int)(1000 * ((float)event345.acceleration.x)) );
+      strcat(altiTelem, temp);
+      sprintf(temp, "%i,", (int)(1000 * ((float)event345.acceleration.y)) );
+      strcat(altiTelem, temp);
+      sprintf(temp, "%i,", (int)(1000 * ((float)event345.acceleration.z)) );
+      strcat(altiTelem, temp);*/
+
     unsigned int chk;
     chk = msgChk(altiTelem, sizeof(altiTelem));
     sprintf(temp, "%i", chk);
