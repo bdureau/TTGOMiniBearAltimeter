@@ -22,12 +22,16 @@ Compile with the following options:
 Prior to compiling go to the TFT_eSPI and open up the file User_Setup_Select.h
 
 Comment out the following line
-
+```
 //#include <User_Setup.h> 
-
+```
 and uncomment the following line
-
+```
 #include <User_Setups/Setup211_LilyGo_T_QT_Pro_S3.h>
+```
+You will need to have the ESP32 board support version 2.0.14, anything higher than that may not work !!!
+
+<img src="/photos/Esp32 board.png" width="55%">
 
 # Contributing
 
