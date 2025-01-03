@@ -408,8 +408,6 @@ void logger_I2C_eeprom::printFlightData(int flightNbr)
       
       Serial.print("$");
       Serial.print(flightData);
-      //SerialCom.print("$");
-      //SerialCom.print(flightData);
     }
   }
 }

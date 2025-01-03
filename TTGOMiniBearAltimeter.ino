@@ -1,6 +1,6 @@
 /*
-    TTGO Mini Bear Altimeter ver0.2
-    Copyright Boris du Reau 2012-2024
+    TTGO Mini Bear Altimeter ver0.3
+    Copyright Boris du Reau 2012-2025
     This is using a BMP085 or BMP180 presure sensor
     to compile it use ESP32 S3 Dev module
     This uses an 24LC512 eeprom to record the flight
@@ -13,15 +13,27 @@
     Code clean up. Turn off the backlight when going to sleep
     detect apogee
 
+    Major changes on version 0.3
+    Fixes to the curve
+
 */
 
 #include <TFT_eSPI.h>
+
 #include <Button2.h>
 #include <TFT_eWidget.h>               // Widget library
 #include <driver/rtc_io.h>
 #include "config.h"
 
+#ifdef BMP085_180
 #include "Bear_BMP085.h"
+#endif
+
+#ifdef BMP280_sensor
+#include <BMP280.h>
+#define P0 1013.25
+#endif
+
 #include "logger_i2c_eeprom.h"
 #include "kalman.h"
 #include <Pangodream_18650_CL.h>
@@ -65,7 +77,7 @@ TraceWidget trPressure = TraceWidget(&gr);
 #define CONV_FACTOR 1.8
 #define READS 20
 #define MAJOR_VERSION 0
-#define MINOR_VERSION 2
+#define MINOR_VERSION 3
 #define BOARD_FIRMWARE "TTGOMiniBearAltimeter"
 #define IMU_SDA      16
 #define IMU_SCL      17
@@ -85,7 +97,14 @@ Pangodream_18650_CL BL(ADC_PIN, CONV_FACTOR, READS);
 
 bool inGraph = false;
 
+//BMP085 bmp;
+#ifdef BMP085_180
 BMP085 bmp;
+#endif
+
+#ifdef BMP280_sensor
+BMP280 bmp;
+#endif
 
 //telemetry
 boolean telemetryEnable = false;
@@ -440,10 +459,44 @@ void loop() {
 
 */
 
+/*float ReadAltitude()
+{
+  return KalmanCalc(bmp.readAltitude());
+}*/
+
+#ifdef BMP085_180
+/*
+   ReadAltitude()
+   Read Altitude function for a BMP85 or 180 Bosch sensor
+
+*/
 float ReadAltitude()
 {
   return KalmanCalc(bmp.readAltitude());
 }
+#endif
+
+
+
+#ifdef BMP280_sensor
+/*
+
+   Read Altitude function for a BMP280 Bosch sensor
+
+
+*/
+double ReadAltitude()
+{
+  double T, P, A;
+  char result = bmp.startMeasurment();
+  if (result != 0) {
+    delay(result);
+    result = bmp.getTemperatureAndPressure(T, P);
+    A = KalmanCalc(bmp.altitude(P, P0));
+  }
+  return A;
+}
+#endif
 
 /*
 
@@ -510,7 +563,8 @@ void drawAxesXY(float minX, float maxX, float minY, float maxY, int flightNbr, c
 
   // Draw the y axis scale
   tft.setTextDatum(MR_DATUM); // Middle right text datum
-  tft.drawNumber(maxY, gr.getPointX(0.0), gr.getPointY(maxY));
+  //tft.drawNumber(maxY, gr.getPointX(0.0), gr.getPointY(maxY));
+  tft.drawNumber(maxY, gr.getPointX(minX)+15, gr.getPointY(maxY));
 }
 
 /*
@@ -648,9 +702,16 @@ void recordAltitude()
       {
         logger.setFlightTimeData( diffTime);
         logger.setFlightAltitudeData(currAltitude);
+        #ifdef BMP085_180
         logger.setFlightTemperatureData((long) bmp.readTemperature());
         logger.setFlightPressureData((long) bmp.readPressure());
-
+        #endif
+        #ifdef BMP280_sensor
+        double temperature, pressure;
+        bmp.getTemperatureAndPressure(temperature, pressure);
+        logger.setFlightTemperatureData((long) temperature);
+        logger.setFlightPressureData((long) pressure);
+        #endif
 
         if ( (currentMemaddress + logger.getSizeOfFlightData())  > endAddress) {
           //flight is full let's save it
@@ -668,7 +729,7 @@ void recordAltitude()
       {
         //end loging
         //store start and end address
-        Serial.println("setFlightEndAddress");
+        //Serial.println("setFlightEndAddress");
         //save end address
         logger.setFlightEndAddress (currentFileNbr, currentMemaddress - 1);
         liftOff = false;
@@ -679,14 +740,9 @@ void recordAltitude()
         exitRecording = true;
         if (currentFileNbr < 25)
           currentFileNbr ++;
-
-        //Serial.println("End recording");
       }
-      //Serial.println("End recording1");
     } // end while (liftoff)
-    //Serial.println("End recording2");
   } //end while(recording)
-  //Serial.println("End recording3");
 }
 
 /*
@@ -734,17 +790,13 @@ void interpretCommandBuffer(char *commandbuffer) {
       logger.printFlightData(i);
     }
     Serial.print(F("$end;\n"));
-    //SerialCom.print(F("$end;\n"));
   }
   //get altimeter config
   else if (commandbuffer[0] == 'b')
   {
     Serial.print(F("$start;\n"));
-    //SerialCom.print(F("$start;\n"));
-
     printAltiConfig();
     Serial.print(F("$end;\n"));
-    //SerialCom.print(F("$end;\n"));
   }
   //toggle continuity on and off
   else if (commandbuffer[0] == 'c')
@@ -761,7 +813,6 @@ void interpretCommandBuffer(char *commandbuffer) {
   //this will erase all flight
   else if (commandbuffer[0] == 'e')
   {
-    //SerialCom.println(F("Erase\n"));
     logger.clearFlightList();
     logger.writeFlightList();
     currentFileNbr = 0;
@@ -801,7 +852,6 @@ void interpretCommandBuffer(char *commandbuffer) {
   //list all flights
   else if (commandbuffer[0] == 'l')
   {
-    //SerialCom.println(F("Flight List: \n"));
     logger.printFlightList();
   }
 
@@ -809,15 +859,9 @@ void interpretCommandBuffer(char *commandbuffer) {
   else if (commandbuffer[0] == 'm')
   {
     if (commandbuffer[1] == '1') {
-#ifdef SERIAL_DEBUG
-      //SerialCom.print(F("main Loop enabled\n"));
-#endif
       //mainLoopEnable = true;
     }
     else {
-#ifdef SERIAL_DEBUG
-      //SerialCom.print(F("main loop disabled\n"));
-#endif
       //mainLoopEnable = false;
     }
 
@@ -831,8 +875,6 @@ void interpretCommandBuffer(char *commandbuffer) {
     char temp[9] = "";
 
     Serial.print(F("$start;\n"));
-    //SerialCom.print(F("$start;\n"));
-
     strcat(flightData, "nbrOfFlight,");
     sprintf(temp, "%i,", logger.getLastFlightNbr() + 1 );
     strcat(flightData, temp);
@@ -844,12 +886,6 @@ void interpretCommandBuffer(char *commandbuffer) {
     Serial.print("$");
     Serial.print(flightData);
     Serial.print(F("$end;\n"));
-
-    /*SerialCom.print("$");
-      SerialCom.print(flightData);
-      SerialCom.print(F("$end;\n"));*/
-
-
   }
   // send test tram
   else if (commandbuffer[0] == 'o')
@@ -900,15 +936,10 @@ void interpretCommandBuffer(char *commandbuffer) {
     if (atol(temp) > -1)
     {
       Serial.print(F("$start;\n"));
-      //SerialCom.print(F("$start;\n"));
-
       logger.printFlightData(atoi(temp));
-
       Serial.print(F("$end;\n"));
-      //SerialCom.print(F("$end;\n"));
     }
     else
-      //SerialCom.println(F("not a valid flight"));
       Serial.println(F("not a valid flight"));
   }
   //write altimeter config
@@ -962,7 +993,6 @@ void interpretCommandBuffer(char *commandbuffer) {
       telemetryEnable = false;
     }
     Serial.print(F("$OK;\n"));
-    //SerialCom.print(F("$OK;\n"));
   }
 
 
@@ -970,7 +1000,6 @@ void interpretCommandBuffer(char *commandbuffer) {
   else if (commandbuffer[0] == ' ')
   {
     Serial.print(F("$K0;\n"));
-    //SerialCom.print(F("$K0;\n"));
   }
   else
   {
@@ -1085,18 +1114,6 @@ void printAltiConfig()
   strcat(altiConfig, temp);
   Serial.print("$");
   Serial.print(altiConfig);
-  //SerialCom.print("$");
-
-  // the following will slow down the connection speed so that it works better with telemetry module
-  // or bluetooth module with no buffer
-  //if (config.useTelemetryPort == 1){
-  for (int j = 0; j < sizeof(altiConfig); j++) {
-    //SerialCom.print(altiConfig[j]);
-    delay(2);
-  }
-  /*}
-    else
-    SerialCom.print(altiConfig);*/
 }
 
 
@@ -1149,9 +1166,16 @@ void SendTelemetry(long sampleTime, int freq) {
     strcat(altiTelem, ",");
 
     // temperature
+    #ifdef BMP085_180
     float temperature;
     temperature = bmp.readTemperature();
     sprintf(temp, "%i,", (int)temperature );
+    #endif
+    #ifdef BMP280_sensor
+    double temperature, pressure;
+    bmp.getTemperatureAndPressure(temperature, pressure);
+    sprintf(temp, "%i,", (int)temperature );
+    #endif
     strcat(altiTelem, temp);
 
     sprintf(temp, "%i,", (int)(100 * ((float)logger.getLastFlightEndAddress() / endAddress)) );

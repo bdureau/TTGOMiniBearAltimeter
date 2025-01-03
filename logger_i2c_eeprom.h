@@ -2,7 +2,6 @@
 #define _LOGGER_I2C_EEPROM_H
 
 #include <Wire.h>
-//#include "config.h"
 
 #if defined(ARDUINO) && ARDUINO >= 100
 #include "Arduino.h"
